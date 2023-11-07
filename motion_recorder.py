@@ -13,6 +13,7 @@ from ctypes import cast, byref
 from tkinter.filedialog import asksaveasfile
 
 import pygame
+import winsound
 import xr
 
 VERSION = 1
@@ -33,7 +34,7 @@ def accu_sleep(target: int, start_time: int):
 
 # Initialize OpenXR
 # ContextObject is a high level pythonic class meant to keep simple cases simple.
-with xr.ContextObject(
+with (xr.ContextObject(
         instance_create_info=xr.InstanceCreateInfo(
             enabled_extension_names=[
                 # A graphics extension is mandatory (without a headless extension)
@@ -41,7 +42,7 @@ with xr.ContextObject(
                 xr.extension.HTCX_vive_tracker_interaction.NAME,
             ],
         ),
-) as context:
+) as context):
     instance = context.instance
     session = context.session
 
@@ -72,7 +73,6 @@ with xr.ContextObject(
         "camera",
         "keyboard",
     ]
-
     role_path_strings = [f"/user/vive_tracker_htcx/role/{role}"
                          for role in role_strings]
     role_paths = (xr.Path * len(role_path_strings))(
@@ -105,7 +105,6 @@ with xr.ContextObject(
             suggested_bindings=suggested_binding_paths,
         )
     )
-
     # Create action spaces for locating trackers in each role
     tracker_action_spaces = (xr.Space * len(role_paths))(
         *[xr.create_action_space(
@@ -121,11 +120,14 @@ with xr.ContextObject(
     result = enumerateViveTrackerPathsHTCX(instance, 0, byref(n_paths), None)
     if xr.check_result(result).is_exception():
         raise result
+    print(xr.Result(result), 0)
+
     vive_tracker_paths = (xr.ViveTrackerPathsHTCX * n_paths.value)(*([xr.ViveTrackerPathsHTCX()] * n_paths.value))
-    # print(xr.Result(result), n_paths.value)
     result = enumerateViveTrackerPathsHTCX(instance, n_paths, byref(n_paths), vive_tracker_paths)
     if xr.check_result(result).is_exception():
         raise result
+    print(xr.Result(result), n_paths.value)
+    # print(*vive_tracker_paths)
 
     # Menu
     print("==Motion Recorder==")
@@ -164,10 +166,10 @@ with xr.ContextObject(
 
     current_frame = 0
     flash_last_frame = False
+    screen.fill("black")
 
     # Loop over the render frames
     for frame_index, frame_state in enumerate(context.frame_loop()):
-        screen.fill("black")
 
         # frame timer
         frame_start = time.perf_counter_ns()
@@ -211,7 +213,17 @@ with xr.ContextObject(
                     print(f"{role_strings[index]}: {space_location.pose}")
                     found_tracker_count += 1
 
-            # if found_tracker_count
+            if found_tracker_count > 0:
+                keys = pygame.key.get_pressed()
+                if keys[pygame.K_SPACE] and not flash_last_frame:
+                    flash_last_frame = True
+                    screen.fill("white")
+                    winsound.Beep(2500, 5)
+                if not keys[pygame.K_SPACE] and flash_last_frame:
+                    screen.fill("black")
+                    flash_last_frame = False
+
+            pygame.display.flip()
 
             if found_tracker_count == 0:
                 print("no trackers found")
@@ -226,7 +238,3 @@ with xr.ContextObject(
 
         # High precision wait timer. The program doesn't sleep anymore but the precision can reach <1ms, so it's good?
         accu_sleep(int(sleep_duration * 1000000000), time.perf_counter_ns())
-
-        debug_time = (time.perf_counter_ns() - frame_start) / 1000000
-        # print(f"current: {debug_time}")
-        print("deviance: ", (debug_time - (sleep_duration * 1000)))
